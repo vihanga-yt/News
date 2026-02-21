@@ -1,0 +1,12 @@
+{
+  "name": "adaderana-news-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for Adaderana RSS feed",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "rss-parser": "^3.13.0"
+  }
+}
