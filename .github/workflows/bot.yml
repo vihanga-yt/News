@@ -1,12 +1,12 @@
-name: Ada Derana News Bot (Node.js)
+name: Ada Derana News Bot (JSON API)
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Runs every 15 minutes
-  workflow_dispatch: # Allows you to manually trigger it from the Actions tab
+    - cron: '0 * * * *' # Runs every hour (matches RSS2JSON free tier update rate)
+  workflow_dispatch:
 
 permissions:
-  contents: write # Needed to save the state file back to GitHub
+  contents: write
 
 jobs:
   fetch_and_post:
@@ -18,21 +18,19 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # Using Node 20 which has native fetch()
+          node-version: '20'
 
-      - name: Install Dependencies
-        run: npm install
-
+      # We don't even need 'npm install' because we have 0 dependencies now!
+      
       - name: Run News Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-        run: npm start
+        run: node index.js
 
-      - name: Save State File to Repository
+      - name: Save State File
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           git add last_news.txt
-          # Commit only if there are new changes
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update last sent news [skip ci]" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update state" && git push)
