@@ -1,21 +1,17 @@
-const Parser = require('rss-parser');
 const fs = require('fs');
 
-const parser = new Parser(); // We don't need headers here anymore
-const RSS_URL = "https://www.adaderana.lk/rss.php";
+// The free JSON API URL for Adaderana
+const API_URL = "https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.adaderana.lk%2Frss.php";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 const STATE_FILE = "last_news.txt";
 
 async function sendTelegramMessage(text) {
-    if (!BOT_TOKEN || !CHANNEL_ID) {
-        console.error("Missing Bot Token or Channel ID");
-        return;
-    }
-
+    if (!BOT_TOKEN || !CHANNEL_ID) return;
+    
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
     try {
-        const response = await fetch(url, {
+        await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -25,89 +21,80 @@ async function sendTelegramMessage(text) {
                 disable_web_page_preview: false
             })
         });
-        if (!response.ok) {
-            console.error(`Telegram Error: ${await response.text()}`);
-        }
     } catch (e) {
-        console.error("Network error sending to Telegram:", e);
+        console.error("Telegram Error:", e);
     }
 }
 
 async function main() {
     try {
-        console.log("Downloading RSS feed manually...");
+        console.log("Fetching news from RSS2JSON API...");
 
-        // 1. Manually fetch the content using native fetch to bypass 403
-        const response = await fetch(RSS_URL, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/rss+xml, application/xml, text/xml',
-                'Cache-Control': 'no-cache'
-            }
-        });
+        // 1. Fetch the JSON data
+        const response = await fetch(API_URL);
+        const data = await response.json();
 
-        if (!response.ok) {
-            throw new Error(`Failed to fetch RSS: ${response.status} ${response.statusText}`);
-        }
-
-        const xmlData = await response.text();
-
-        // 2. Parse the XML string we just downloaded
-        const feed = await parser.parseString(xmlData);
-
-        if (!feed.items || feed.items.length === 0) {
-            console.log("No entries found.");
+        // Check if the API returned an error (common if the feed is blocked)
+        if (data.status !== 'ok') {
+            console.error("API Error:", data.message);
             return;
         }
 
-        console.log(`Successfully parsed ${feed.items.length} items.`);
-
-        // 3. Read last sent ID
-        let lastIdentifier = "";
-        if (fs.existsSync(STATE_FILE)) {
-            lastIdentifier = fs.readFileSync(STATE_FILE, "utf-8").trim();
+        const items = data.items;
+        if (!items || items.length === 0) {
+            console.log("No news items found.");
+            return;
         }
 
-        // 4. Find new entries
+        console.log(`Received ${items.length} articles from API.`);
+
+        // 2. Read the last sent news link to avoid duplicates
+        let lastLink = "";
+        if (fs.existsSync(STATE_FILE)) {
+            lastLink = fs.readFileSync(STATE_FILE, "utf-8").trim();
+        }
+
+        // 3. Filter for NEW articles only
         const newEntries = [];
-        for (const item of feed.items) {
-            const identifier = item.guid || item.link;
-            if (identifier === lastIdentifier) break;
+        for (const item of items) {
+            // The API returns 'link' and 'guid'. We use 'link' as the unique ID.
+            if (item.link === lastLink) {
+                break; // Stop once we reach a story we've already sent
+            }
             newEntries.push(item);
         }
 
         if (newEntries.length === 0) {
-            console.log("No new news.");
+            console.log("No new news to send.");
             return;
         }
 
-        // 5. Send oldest to newest
+        // 4. Reverse the list (so we send the oldest of the new items first)
         newEntries.reverse();
 
+        // 5. Send to Telegram
         for (const item of newEntries) {
             const title = item.title;
             const link = item.link;
-            const pubDate = item.pubDate || '';
-            
-            // Cleanup title (sometimes RSS has html entities)
-            const cleanTitle = title.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+            const pubDate = item.pubDate;
 
-            const message = `📰 <b>${cleanTitle}</b>\n\n🕒 ${pubDate}\n\n🔗 <a href='${link}'>Read Full Story</a>`;
+            // Construct Message
+            const message = `📰 <b>${title}</b>\n\n🕒 ${pubDate}\n\n🔗 <a href='${link}'>Read Full Story</a>`;
             
             await sendTelegramMessage(message);
-            console.log(`Sent: ${cleanTitle}`);
-            
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log(`Sent: ${title}`);
+
+            // Wait 2 seconds between messages to be safe
+            await new Promise(r => setTimeout(r, 2000));
         }
 
-        // 6. Save state
-        const latestEntry = feed.items[0];
-        const latestIdentifier = latestEntry.guid || latestEntry.link;
-        fs.writeFileSync(STATE_FILE, latestIdentifier);
-        console.log("State updated.");
+        // 6. Save the latest link to our state file
+        // The first item in the original 'items' array is always the newest
+        fs.writeFileSync(STATE_FILE, items[0].link);
+        console.log("State updated successfully.");
 
     } catch (error) {
-        console.error("CRITICAL ERROR:", error);
+        console.error("Critical Error:", error);
         process.exit(1);
     }
 }
